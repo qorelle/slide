@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>スライドショー</title>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -28,6 +28,7 @@
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html, body { height: 100%; margin: 0; }
+html { touch-action: manipulation; -webkit-text-size-adjust: 100%; }
 body { background: var(--bg); color: var(--fg); font: 15px/1.5 var(--font-ui); -webkit-tap-highlight-color: transparent; overscroll-behavior: none; }
 button { font: inherit; color: inherit; }
 button:focus-visible, input:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
@@ -265,11 +266,10 @@ if ('serviceWorker' in navigator) {
     const d = await openDB(); const t = d.transaction('photos', 'readwrite'); const dn = doneP(t);
     const s = t.objectStore('photos'); recs.forEach(r => s.put(r)); return dn;
   }
-  async function setFav(id, fav) {
-    const d = await openDB(); const t = d.transaction('photos', 'readwrite'); const dn = doneP(t);
-    const s = t.objectStore('photos'); const r = s.get(id);
-    r.onsuccess = () => { const v = r.result; if (v) { v.fav = fav; s.put(v); } };
-    return dn;
+  // お気に入りは写真データとは別に、プロジェクトの記録へ ID の一覧として保存する
+  function favSetOf(p, photos) {
+    if (Array.isArray(p.favs)) return new Set(p.favs);
+    return new Set(photos.filter(x => x.fav === true).map(x => x.id)); // 以前の形式からの引き継ぎ（初回だけ）
   }
   async function deleteProject(pid) {
     const d = await openDB(); const t = d.transaction(['projects', 'photos'], 'readwrite'); const dn = doneP(t);
@@ -315,7 +315,8 @@ if ('serviceWorker' in navigator) {
     $('homeEmpty').hidden = list.length > 0;
     for (const p of list) {
       const photos = (await getPhotos(p.id)).sort(byName);
-      const favs = photos.filter(x => x.fav);
+      const fs = favSetOf(p, photos);
+      const favs = photos.filter(x => fs.has(x.id));
       const coverPh = favs[0] || photos[0];
       const card = document.createElement('button'); card.className = 'card';
       const cv = document.createElement('div'); cv.className = 'cover';
@@ -340,6 +341,11 @@ if ('serviceWorker' in navigator) {
     const proj = await getProject(id);
     if (!proj) { showHome(); return; }
     const photos = (await getPhotos(id)).sort(byName);
+    const legacy = !Array.isArray(proj.favs);
+    const fs = favSetOf(proj, photos);
+    photos.forEach(x => { x.fav = fs.has(x.id); });
+    proj.favs = [...fs];
+    if (legacy) putProject(proj).catch(() => {});
     P = { proj, photos };
     $('projName').textContent = proj.name;
     showScreen('project'); $('project').scrollTop = 0;
@@ -378,10 +384,14 @@ if ('serviceWorker' in navigator) {
     });
     g.appendChild(frag);
   }
+  let favSave = Promise.resolve();
   async function toggleFav(ph) {
     ph.fav = !ph.fav;
-    try { await setFav(ph.id, ph.fav); P.proj.updated = Date.now(); putProject(P.proj).catch(() => {}); }
-    catch { ph.fav = !ph.fav; toast('保存できませんでした'); }
+    P.proj.favs = P.photos.filter(x => x.fav).map(x => x.id);
+    P.proj.updated = Date.now();
+    const snapshot = { ...P.proj, favs: P.proj.favs.slice() };
+    favSave = favSave.then(() => putProject(snapshot)).catch(() => toast('お気に入りを保存できませんでした'));
+    return favSave;
   }
   async function setFilter(favOnly) {
     if (P.proj.favOnly === favOnly) return;
@@ -481,6 +491,7 @@ if ('serviceWorker' in navigator) {
   function closeViewer() {
     clearTimeout(V.timer); clearTimeout(V.hideT);
     $('viewer').hidden = true; stage.innerHTML = ''; V.cur = null;
+    Z.s = 1; Z.tx = 0; Z.ty = 0; pinch = null; pan = null; drag = null; pts.clear();
     try { if (V.wake) V.wake.release(); } catch {} V.wake = null;
     if (V.dirty && P) { const sc = $('project').scrollTop; renderGrid(); $('project').scrollTop = sc; }
   }
@@ -493,6 +504,7 @@ if ('serviceWorker' in navigator) {
   // 自動で切り替えるときはフェード
   function showAt(i) {
     clearTimeout(V.timer);
+    Z.s = 1; Z.tx = 0; Z.ty = 0; pinch = null; pan = null;
     V.pos = wrapI(i);
     const im = makeImg(V.seq[V.pos]);
     V.cur = im;
@@ -507,7 +519,7 @@ if ('serviceWorker' in navigator) {
     im.onload = go; im.onerror = go;
     updateInfo(); schedule();
   }
-  function schedule() { clearTimeout(V.timer); if (!locked && V.playing && V.seq.length > 1) V.timer = setTimeout(() => showAt(V.pos + 1), secs * 1000); }
+  function schedule() { clearTimeout(V.timer); if (!locked && !zoomed() && V.playing && V.seq.length > 1) V.timer = setTimeout(() => showAt(V.pos + 1), secs * 1000); }
   function updateInfo() {
     $('count').textContent = (V.pos + 1) + ' / ' + V.seq.length;
     const ph = V.seq[V.pos]; const h = $('vHeart');
@@ -552,12 +564,69 @@ if ('serviceWorker' in navigator) {
 
   // 指で動かすとスワイプで切り替え。タップは操作バー、ダブルタップはお気に入り
   let drag = null, tapT = null, lastTap = 0;
+  // ピンチ拡大（写真だけを拡大。画面全体は拡大しない）
+  const pts = new Map();
+  const Z = { s: 1, tx: 0, ty: 0 };
+  let pinch = null, pan = null, ignoreRest = false;
+  const zoomed = () => Z.s > 1.001;
+  function applyZ(animate) {
+    const el = V.cur; if (!el) return;
+    el.classList.toggle('slide', !!animate);
+    el.style.transformOrigin = '0 0';
+    el.style.transform = zoomed() || animate ? 'translate(' + Z.tx + 'px,' + Z.ty + 'px) scale(' + Z.s + ')' : '';
+    if (animate) setTimeout(() => { el.classList.remove('slide'); if (!zoomed()) el.style.transform = ''; }, 320);
+  }
+  function clampZ() {
+    const W = stage.clientWidth, H = stage.clientHeight;
+    Z.tx = Math.min(0, Math.max(W - W * Z.s, Z.tx));
+    Z.ty = Math.min(0, Math.max(H - H * Z.s, Z.ty));
+  }
+  function resetZoom(animate) { Z.s = 1; Z.tx = 0; Z.ty = 0; applyZ(animate); }
+  function startPinch() {
+    const [a, b] = [...pts.values()];
+    pinch = { d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, m0: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, s0: Z.s, tx0: Z.tx, ty0: Z.ty };
+    clearTimeout(V.timer); clearTimeout(tapT);
+  }
+  function movePinch() {
+    const [a, b] = [...pts.values()];
+    const d = Math.hypot(a.x - b.x, a.y - b.y), m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    const s = Math.min(6, Math.max(0.7, pinch.s0 * d / pinch.d0));
+    Z.tx = m.x - (pinch.m0.x - pinch.tx0) * (s / pinch.s0);
+    Z.ty = m.y - (pinch.m0.y - pinch.ty0) * (s / pinch.s0);
+    Z.s = s;
+    const el = V.cur; el.classList.remove('slide'); el.style.transformOrigin = '0 0';
+    el.style.transform = 'translate(' + Z.tx + 'px,' + Z.ty + 'px) scale(' + Z.s + ')';
+  }
+  function endPinch() {
+    pinch = null; ignoreRest = pts.size > 0;
+    if (Z.s < 1.05) { resetZoom(true); schedule(); }
+    else { clampZ(); applyZ(true); }
+  }
+
   stage.addEventListener('pointerdown', e => {
-    if (V.anim || drag) return;
-    drag = { id: e.pointerId, x0: e.clientX, y0: e.clientY, t0: Date.now(), lx: e.clientX, lt: Date.now(), vx: 0, dx: 0, active: false };
+    if (V.anim) return;
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
     try { stage.setPointerCapture(e.pointerId); } catch {}
+    if (pts.size === 2) {
+      if (drag && drag.active) { const d = drag; drag = null; finishDrag(d, 0); return; }
+      drag = null; pan = null;
+      if (!V.cur || !V.cur.isConnected) return;
+      startPinch(); return;
+    }
+    if (pts.size > 2 || pinch) return;
+    ignoreRest = false;
+    if (zoomed()) { pan = { id: e.pointerId, x0: e.clientX, y0: e.clientY, t0: Date.now(), tx0: Z.tx, ty0: Z.ty, moved: false }; return; }
+    if (drag) return;
+    drag = { id: e.pointerId, x0: e.clientX, y0: e.clientY, t0: Date.now(), lx: e.clientX, lt: Date.now(), vx: 0, dx: 0, active: false };
   });
   stage.addEventListener('pointermove', e => {
+    if (pts.has(e.pointerId)) pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pinch) { if (pts.size >= 2) movePinch(); return; }
+    if (pan && e.pointerId === pan.id) {
+      const dx = e.clientX - pan.x0, dy = e.clientY - pan.y0;
+      if (Math.hypot(dx, dy) > 8) pan.moved = true;
+      Z.tx = pan.tx0 + dx; Z.ty = pan.ty0 + dy; clampZ(); applyZ(false); return;
+    }
     if (!drag || e.pointerId !== drag.id) return;
     const dx = e.clientX - drag.x0, dy = e.clientY - drag.y0;
     if (!drag.active) {
@@ -590,6 +659,14 @@ if ('serviceWorker' in navigator) {
     if (drag.prev) drag.prev.style.transform = 'translateX(' + (-W + dx) + 'px)';
   }
   function endPointer(e) {
+    pts.delete(e.pointerId);
+    if (pinch) { if (pts.size < 2) endPinch(); return; }
+    if (ignoreRest) { if (pts.size === 0) ignoreRest = false; return; }
+    if (pan && e.pointerId === pan.id) {
+      const p = pan; pan = null;
+      if (!p.moved && e.type === 'pointerup' && Date.now() - p.t0 < 400) handleTap();
+      return;
+    }
     if (!drag || e.pointerId !== drag.id) return;
     const d = drag; drag = null;
     if (!d.active) {
@@ -600,6 +677,10 @@ if ('serviceWorker' in navigator) {
     let dir = 0;
     if (V.seq.length > 1 && (Math.abs(d.dx) > W * 0.2 || Math.abs(d.vx) > 0.5)) dir = d.dx < 0 ? 1 : -1;
     if (dir && Math.sign(d.vx) === dir && Math.abs(d.vx) > 0.5 && Math.abs(d.dx) < W * 0.2) dir = 0; // 逆向きに弾いたら戻す
+    finishDrag(d, dir);
+  }
+  function finishDrag(d, dir) {
+    const W = stage.clientWidth;
     const els = [V.cur, d.next, d.prev].filter(Boolean);
     els.forEach(x => { x.classList.remove('drag'); x.classList.add('slide'); });
     V.anim = true;
@@ -699,6 +780,9 @@ if ('serviceWorker' in navigator) {
   // アプリを閉じたり別のアプリに切り替えたら、すぐ鍵をかける
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && lockMode !== 'setup') lockNow(); });
   window.addEventListener('pagehide', () => { if (lockMode !== 'setup') lockNow(); });
+
+  // iPad の Safari で画面全体が拡大されないようにする
+  ['gesturestart', 'gesturechange', 'gestureend'].forEach(t => document.addEventListener(t, e => e.preventDefault(), { passive: false }));
 
   updatePlayIcon();
   lockNow();
