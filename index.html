@@ -66,6 +66,13 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--fg); outlin
 .fav svg, .vheart svg, #pop svg { fill: none; stroke: #fff; stroke-width: 2; }
 .fav svg { width: 22px; height: 22px; filter: drop-shadow(0 1px 2px rgba(0,0,0,.5)); }
 .on > svg { fill: var(--heart); stroke: var(--heart); }
+.selbar { min-height: 44px; }
+.selCount { font-weight: 600; font-variant-numeric: tabular-nums; }
+.check { position: absolute; left: 6px; top: 6px; width: 26px; height: 26px; border-radius: 50%; border: 2px solid #fff; background: rgba(0,0,0,.25); display: grid; place-items: center; pointer-events: none; box-shadow: 0 1px 3px rgba(0,0,0,.35); }
+.check svg { width: 14px; height: 14px; fill: none; stroke: #fff; stroke-width: 3; opacity: 0; }
+.cell.sel .check { background: #0a84ff; }
+.cell.sel .check svg { opacity: 1; }
+.cell.sel img { opacity: .7; }
 .emptyBox { padding: 56px 16px; text-align: center; color: var(--muted); display: grid; gap: 14px; justify-items: center; line-height: 1.7; }
 
 /* 再生画面（常に暗い） */
@@ -154,15 +161,23 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--fg); outlin
       <h1 id="projName"></h1>
       <button class="link muted" id="renameProj">名前を変更</button>
     </div>
-    <div class="toolbar">
+    <div class="toolbar" id="mainBar">
       <button class="btn primary" id="playProj"><svg viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z"/></svg>再生</button>
       <div class="seg" role="group" aria-label="表示する写真">
         <button id="fAll" aria-pressed="true">すべて</button>
         <button id="fFav" aria-pressed="false">お気に入り</button>
       </div>
       <span class="spacer"></span>
+      <button class="btn" id="selBtn">選択</button>
       <button class="btn" id="addPhotos">写真を追加</button>
-      <button class="link danger" id="delProj">削除</button>
+      <button class="link danger" id="delProj">プロジェクトを削除</button>
+    </div>
+    <div class="toolbar selbar" id="selBar" hidden>
+      <span class="selCount" id="selCount">写真を選んでください</span>
+      <button class="link" id="selAll">すべて選択</button>
+      <span class="spacer"></span>
+      <button class="btn danger" id="selDel" disabled>削除</button>
+      <button class="btn" id="selDone">完了</button>
     </div>
     <div class="grid" id="grid"></div>
     <div class="emptyBox" id="gridEmpty" hidden></div>
@@ -294,6 +309,12 @@ if ('serviceWorker' in navigator) {
     });
     return dn;
   }
+  async function deleteItems(ids) {
+    const d = await openDB(); const t = d.transaction(['items', 'blobs'], 'readwrite'); const dn = doneP(t);
+    const is = t.objectStore('items'), bs = t.objectStore('blobs');
+    ids.forEach(k => { is.delete(k); bs.delete(k); });
+    return dn;
+  }
   async function deleteProject(pid) {
     const d = await openDB(); const t = d.transaction(['projects', 'items', 'blobs'], 'readwrite'); const dn = doneP(t);
     t.objectStore('projects').delete(pid);
@@ -404,7 +425,8 @@ if ('serviceWorker' in navigator) {
     if (!proj) { showHome(); return; }
     const fs = new Set(proj.favs || []);
     photos.forEach(x => { x.fav = fs.has(x.id); });
-    P = { proj, photos };
+    P = { proj, photos, selecting: false, sel: new Set() };
+    setSelecting(false);
     $('projName').textContent = proj.name;
     showScreen('project'); $('project').scrollTop = 0;
     renderGrid();
@@ -429,7 +451,16 @@ if ('serviceWorker' in navigator) {
       if (!ph.turl && ph.thumb) ph.turl = URL.createObjectURL(ph.thumb);
       const c = document.createElement('div'); c.className = 'cell';
       const im = document.createElement('img'); if (ph.turl) im.src = ph.turl; im.loading = 'lazy'; im.alt = ph.name;
-      im.onclick = () => openViewer(ph.id);
+      im.onclick = () => {
+        if (!P.selecting) { openViewer(ph.id); return; }
+        if (P.sel.has(ph.id)) P.sel.delete(ph.id); else P.sel.add(ph.id);
+        c.classList.toggle('sel', P.sel.has(ph.id)); updateSel();
+      };
+      if (P.selecting) {
+        c.classList.toggle('sel', P.sel.has(ph.id));
+        const ck = document.createElement('span'); ck.className = 'check'; ck.innerHTML = '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+        c.append(im, ck); frag.appendChild(c); return;
+      }
       const b = document.createElement('button'); b.className = 'fav' + (ph.fav ? ' on' : ''); b.innerHTML = HEART;
       b.setAttribute('aria-label', 'お気に入り'); b.setAttribute('aria-pressed', ph.fav);
       b.onclick = e => {
@@ -454,8 +485,42 @@ if ('serviceWorker' in navigator) {
   async function setFilter(favOnly) {
     if (P.proj.favOnly === favOnly) return;
     P.proj.favOnly = favOnly; putProject({ ...P.proj }).catch(() => {});
+    if (P.selecting) { P.sel.clear(); updateSel(); }
     renderGrid();
   }
+  // 複数選択して削除
+  function setSelecting(on) {
+    if (!P) return;
+    P.selecting = on; P.sel.clear();
+    $('mainBar').hidden = on; $('selBar').hidden = !on;
+    updateSel();
+  }
+  function updateSel() {
+    const n = P.sel.size, vis = visible().length;
+    $('selCount').textContent = n ? n + ' 枚を選択中' : '写真を選んでください';
+    $('selDel').disabled = n === 0;
+    $('selAll').textContent = n && n === vis ? '選択を解除' : 'すべて選択';
+  }
+  $('selBtn').onclick = () => { setSelecting(true); renderGrid(); };
+  $('selDone').onclick = () => { setSelecting(false); renderGrid(); };
+  $('selAll').onclick = () => {
+    const vis = visible();
+    if (P.sel.size === vis.length) P.sel.clear(); else vis.forEach(x => P.sel.add(x.id));
+    const sc = $('project').scrollTop; renderGrid(); $('project').scrollTop = sc; updateSel();
+  };
+  $('selDel').onclick = async () => {
+    const ids = [...P.sel]; if (!ids.length) return;
+    const ok = await ask({ title: ids.length + ' 枚の写真を削除しますか？', text: 'このプロジェクトから外して、アプリ内のコピーを消します。ファイルアプリの元の写真は消えません。', ok: '削除', danger: true });
+    if (!ok) return;
+    try { await deleteItems(ids); } catch { toast('削除できませんでした'); return; }
+    const gone = new Set(ids);
+    P.photos.forEach(x => { if (gone.has(x.id)) { if (x.turl) URL.revokeObjectURL(x.turl); if (x.url) URL.revokeObjectURL(x.url); } });
+    P.photos = P.photos.filter(x => !gone.has(x.id));
+    P.proj.favs = P.photos.filter(x => x.fav).map(x => x.id); P.proj.updated = Date.now();
+    await putProject({ ...P.proj }).catch(() => {});
+    toast(ids.length + ' 枚を削除しました');
+    const sc = $('project').scrollTop; setSelecting(false); renderGrid(); $('project').scrollTop = sc;
+  };
   $('fAll').onclick = () => setFilter(false);
   $('fFav').onclick = () => setFilter(true);
   $('backHome').onclick = () => showHome();
