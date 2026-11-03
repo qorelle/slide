@@ -103,7 +103,14 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--fg); outlin
 @keyframes pop { 0% { opacity: 0; transform: scale(.6); } 25% { opacity: 1; transform: scale(1.05); } 60% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(1); } }
 
 #busy { position: fixed; inset: 0; z-index: 20; background: rgba(0,0,0,.45); display: grid; place-items: center; }
-#busy div { background: var(--surface); color: var(--fg); padding: 18px 24px; border-radius: 14px; font-variant-numeric: tabular-nums; }
+#busy .busyBox { background: var(--surface); color: var(--fg); padding: 20px 24px; border-radius: 14px; font-variant-numeric: tabular-nums; display: grid; gap: 14px; justify-items: center; min-width: 220px; }
+#modal { position: fixed; inset: 0; z-index: 40; background: rgba(0,0,0,.45); display: grid; place-items: center; padding: 24px 16px; }
+.mbox { width: 100%; max-width: 360px; background: var(--surface); color: var(--fg); border-radius: 16px; padding: 20px; display: grid; gap: 12px; }
+.mbox h3 { margin: 0; font-size: 1.05rem; font-weight: 600; text-wrap: balance; }
+.mbox p { margin: 0; color: var(--muted); font-size: .9rem; line-height: 1.6; }
+.mbox input { width: 100%; font: inherit; font-size: 1rem; padding: 11px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
+.mbtns { display: flex; gap: 10px; justify-content: flex-end; margin-top: 4px; }
+.btn.danger { background: var(--danger); color: #fff; }
 #toast { position: fixed; top: calc(16px + env(safe-area-inset-top, 0px)); left: 50%; transform: translateX(-50%); background: var(--tray); color: var(--fg); border: 1px solid var(--line); padding: 8px 16px; border-radius: 999px; font-size: .88rem; opacity: 0; transition: opacity .25s; pointer-events: none; z-index: 30; max-width: calc(100% - 32px); text-align: center; -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); }
 #toast.show { opacity: 1; }
 #lock { position: fixed; inset: 0; z-index: 50; background: var(--bg); display: grid; place-items: center;
@@ -216,7 +223,15 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--fg); outlin
   </div>
 </div>
 
-<div id="busy" hidden><div id="busyText">読み込み中…</div></div>
+<div id="busy" hidden><div class="busyBox"><div id="busyText">読み込み中…</div><button class="btn" id="busyCancel" hidden>中止</button></div></div>
+<div id="modal" hidden>
+  <form class="mbox" id="mForm">
+    <h3 id="mTitle"></h3>
+    <p id="mText"></p>
+    <input id="mInput" type="text" aria-label="名前" hidden>
+    <div class="mbtns"><button type="button" class="btn" id="mCancel">キャンセル</button><button type="submit" class="btn primary" id="mOk">OK</button></div>
+  </form>
+</div>
 <div id="toast"></div>
 
 <script>
@@ -238,17 +253,23 @@ if ('serviceWorker' in navigator) {
   let secs = store.get('secs', 5), random = store.get('random', false), cover = store.get('cover', false);
 
   /* ---------- 保存（iPadの中） ---------- */
+  // projects: プロジェクト（名前・お気に入りの一覧）
+  // items:    写真の名前と小さなサムネイル
+  // blobs:    表示用の写真（画面サイズに縮めたもの）。必要なときだけ1枚ずつ読む
+  const DB_NAME = 'slideshow-v3';
   let dbp = null;
   function openDB() {
     if (!dbp) dbp = new Promise((res, rej) => {
-      const r = indexedDB.open('slideshow-v2', 1);
+      const r = indexedDB.open(DB_NAME, 1);
       r.onupgradeneeded = () => {
         const d = r.result;
         d.createObjectStore('projects', { keyPath: 'id', autoIncrement: true });
-        d.createObjectStore('photos', { keyPath: 'id', autoIncrement: true }).createIndex('project', 'projectId');
+        d.createObjectStore('items', { keyPath: 'id', autoIncrement: true }).createIndex('project', 'projectId');
+        d.createObjectStore('blobs', { keyPath: 'id' });
       };
       r.onsuccess = () => res(r.result);
       r.onerror = () => { dbp = null; rej(r.error); };
+      r.onblocked = () => { dbp = null; rej(new Error('blocked')); };
     });
     return dbp;
   }
@@ -257,50 +278,88 @@ if ('serviceWorker' in navigator) {
 
   async function listProjects() { const d = await openDB(); return reqP(d.transaction('projects').objectStore('projects').getAll()); }
   async function getProject(id) { const d = await openDB(); return reqP(d.transaction('projects').objectStore('projects').get(id)); }
-  async function getPhotos(pid) { const d = await openDB(); return reqP(d.transaction('photos').objectStore('photos').index('project').getAll(pid)); }
+  async function getItems(pid) { const d = await openDB(); return reqP(d.transaction('items').objectStore('items').index('project').getAll(pid)); }
+  async function getBlob(id) { const d = await openDB(); const r = await reqP(d.transaction('blobs').objectStore('blobs').get(id)); return r && r.blob; }
   async function putProject(p) {
     const d = await openDB(); const t = d.transaction('projects', 'readwrite'); const dn = doneP(t);
     const id = await reqP(t.objectStore('projects').put(p)); await dn; return id;
   }
-  async function addPhotoRecs(recs) {
-    const d = await openDB(); const t = d.transaction('photos', 'readwrite'); const dn = doneP(t);
-    const s = t.objectStore('photos'); recs.forEach(r => s.put(r)); return dn;
-  }
-  // お気に入りは写真データとは別に、プロジェクトの記録へ ID の一覧として保存する
-  function favSetOf(p, photos) {
-    if (Array.isArray(p.favs)) return new Set(p.favs);
-    return new Set(photos.filter(x => x.fav === true).map(x => x.id)); // 以前の形式からの引き継ぎ（初回だけ）
+  // 数枚ずつまとめて保存する（一度に大量に書くとiPadのメモリが足りなくなる）
+  async function writeBatch(pid, recs) {
+    const d = await openDB(); const t = d.transaction(['items', 'blobs'], 'readwrite'); const dn = doneP(t);
+    const is = t.objectStore('items'), bs = t.objectStore('blobs');
+    recs.forEach(r => {
+      const q = is.add({ projectId: pid, name: r.name, size: r.size, thumb: r.thumb, added: Date.now() });
+      q.onsuccess = () => bs.put({ id: q.result, blob: r.display });
+    });
+    return dn;
   }
   async function deleteProject(pid) {
-    const d = await openDB(); const t = d.transaction(['projects', 'photos'], 'readwrite'); const dn = doneP(t);
+    const d = await openDB(); const t = d.transaction(['projects', 'items', 'blobs'], 'readwrite'); const dn = doneP(t);
     t.objectStore('projects').delete(pid);
-    const ps = t.objectStore('photos'); const r = ps.index('project').getAllKeys(pid);
-    r.onsuccess = () => r.result.forEach(k => ps.delete(k));
+    const is = t.objectStore('items'), bs = t.objectStore('blobs');
+    const r = is.index('project').getAllKeys(pid);
+    r.onsuccess = () => r.result.forEach(k => { is.delete(k); bs.delete(k); });
     return dn;
   }
 
   /* ---------- 共通 ---------- */
   let toastT;
-  function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 2800); }
-  function busy(on, text) { $('busy').hidden = !on; if (text) $('busyText').textContent = text; }
+  function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 3200); }
+  let busyCancel = false;
+  function busy(on, text, cancellable) {
+    $('busy').hidden = !on; if (text) $('busyText').textContent = text;
+    $('busyCancel').hidden = !cancellable;
+    if (on && !cancellable) busyCancel = false;
+  }
+  $('busyCancel').onclick = () => { busyCancel = true; $('busyText').textContent = '中止しています…'; };
   function setSeg(a, b, firstOn) { $(a).setAttribute('aria-pressed', firstOn); $(b).setAttribute('aria-pressed', !firstOn); }
   function showScreen(id) { ['home', 'project'].forEach(s => $(s).hidden = s !== id); }
 
-  function makeThumb(blob) {
+  // アプリ内の確認・入力ダイアログ
+  function ask({ title, text = '', value = null, ok = 'OK', danger = false }) {
     return new Promise(res => {
-      const url = URL.createObjectURL(blob); const img = new Image();
-      img.onload = () => {
-        try {
-          const w0 = img.naturalWidth, h0 = img.naturalHeight; if (!w0 || !h0) throw 0;
-          const k = Math.min(1, 480 / Math.min(w0, h0));
-          const c = document.createElement('canvas'); c.width = Math.round(w0 * k); c.height = Math.round(h0 * k);
-          c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-          c.toBlob(b => { URL.revokeObjectURL(url); res(b); }, 'image/jpeg', 0.82);
-        } catch { URL.revokeObjectURL(url); res(null); }
-      };
-      img.onerror = () => { URL.revokeObjectURL(url); res(null); };
+      $('mTitle').textContent = title; $('mText').textContent = text; $('mText').hidden = !text;
+      const inp = $('mInput'); inp.hidden = value === null; inp.value = value || '';
+      $('mOk').textContent = ok; $('mOk').classList.toggle('danger', danger);
+      $('modal').hidden = false;
+      if (value !== null) setTimeout(() => { try { inp.focus(); inp.select(); } catch {} }, 60);
+      const close = v => { $('modal').hidden = true; $('mForm').onsubmit = null; $('mCancel').onclick = null; res(v); };
+      $('mForm').onsubmit = e => { e.preventDefault(); close(value === null ? true : inp.value); };
+      $('mCancel').onclick = () => close(null);
+    });
+  }
+
+  // 写真を読み込んで、表示用（画面サイズ）とサムネイルを作る
+  const cvs = document.createElement('canvas');
+  function decode(blob, ms) {
+    return new Promise(res => {
+      const url = URL.createObjectURL(blob); const img = new Image(); let done = false;
+      const fin = v => { if (done) return; done = true; clearTimeout(tm); URL.revokeObjectURL(url); res(v); };
+      const tm = setTimeout(() => { img.src = ''; fin(null); }, ms);
+      img.onload = () => fin(img.naturalWidth && img.naturalHeight ? img : null);
+      img.onerror = () => fin(null);
       img.src = url;
     });
+  }
+  function renderTo(img, k, quality) {
+    const w = Math.max(1, Math.round(img.naturalWidth * k)), h = Math.max(1, Math.round(img.naturalHeight * k));
+    cvs.width = w; cvs.height = h;
+    const ctx = cvs.getContext('2d');
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0, w, h);
+    return new Promise(res => cvs.toBlob(b => res(b), 'image/jpeg', quality));
+  }
+  // 表示用は元のファイルをそのまま保存する（画質はそのまま）。一覧用の小さなサムネイルだけ作る
+  async function prepare(file) {
+    const img = await decode(file, 30000);
+    if (!img) return null;
+    try {
+      const w0 = img.naturalWidth, h0 = img.naturalHeight;
+      const thumb = await renderTo(img, Math.min(1, 360 / Math.min(w0, h0)), 0.8);
+      return thumb ? { display: file, thumb } : null;
+    } catch { return null; }
+    finally { cvs.width = 1; cvs.height = 1; img.src = ''; }
   }
 
   /* ---------- 一覧画面 ---------- */
@@ -308,21 +367,22 @@ if ('serviceWorker' in navigator) {
   async function showHome() {
     leaveProject(); showScreen('home');
     homeUrls.forEach(u => URL.revokeObjectURL(u)); homeUrls = [];
+    const box = $('projList'); box.innerHTML = '';
     let list = [];
     try { list = await listProjects(); } catch { toast('保存データを開けませんでした'); }
     list.sort((a, b) => (b.updated || 0) - (a.updated || 0));
-    const box = $('projList'); box.innerHTML = '';
     $('homeEmpty').hidden = list.length > 0;
     for (const p of list) {
-      const photos = (await getPhotos(p.id)).sort(byName);
-      const fs = favSetOf(p, photos);
-      const favs = photos.filter(x => fs.has(x.id));
-      const coverPh = favs[0] || photos[0];
+      let items = [];
+      try { items = (await getItems(p.id)).sort(byName); } catch {}
+      const fs = new Set(p.favs || []);
+      const favs = items.filter(x => fs.has(x.id));
+      const coverPh = favs[0] || items[0];
       const card = document.createElement('button'); card.className = 'card';
       const cv = document.createElement('div'); cv.className = 'cover';
-      if (coverPh) { const u = URL.createObjectURL(coverPh.thumb || coverPh.blob); homeUrls.push(u); const im = document.createElement('img'); im.src = u; im.alt = ''; cv.appendChild(im); }
+      if (coverPh && coverPh.thumb) { const u = URL.createObjectURL(coverPh.thumb); homeUrls.push(u); const im = document.createElement('img'); im.src = u; im.alt = ''; cv.appendChild(im); }
       const nm = document.createElement('div'); nm.className = 'name'; nm.textContent = p.name;
-      const mt = document.createElement('div'); mt.className = 'meta'; mt.textContent = photos.length + ' 枚 · お気に入り ' + favs.length;
+      const mt = document.createElement('div'); mt.className = 'meta'; mt.textContent = items.length + ' 枚 · お気に入り ' + favs.length;
       card.append(cv, nm, mt);
       card.onclick = () => openProject(p.id);
       box.appendChild(card);
@@ -338,14 +398,12 @@ if ('serviceWorker' in navigator) {
   }
   async function openProject(id) {
     leaveProject();
-    const proj = await getProject(id);
+    let proj = null, photos = [];
+    try { proj = await getProject(id); if (proj) photos = (await getItems(id)).sort(byName); }
+    catch { toast('プロジェクトを開けませんでした'); }
     if (!proj) { showHome(); return; }
-    const photos = (await getPhotos(id)).sort(byName);
-    const legacy = !Array.isArray(proj.favs);
-    const fs = favSetOf(proj, photos);
+    const fs = new Set(proj.favs || []);
     photos.forEach(x => { x.fav = fs.has(x.id); });
-    proj.favs = [...fs];
-    if (legacy) putProject(proj).catch(() => {});
     P = { proj, photos };
     $('projName').textContent = proj.name;
     showScreen('project'); $('project').scrollTop = 0;
@@ -368,15 +426,15 @@ if ('serviceWorker' in navigator) {
     em.textContent = P.photos.length ? 'お気に入りはまだありません。写真の右下のハートを押すか、再生中に画面をダブルタップすると追加できます。' : '写真がありません。「写真を追加」から選んでください。';
     const frag = document.createDocumentFragment();
     vis.forEach(ph => {
-      if (!ph.turl) ph.turl = URL.createObjectURL(ph.thumb || ph.blob);
+      if (!ph.turl && ph.thumb) ph.turl = URL.createObjectURL(ph.thumb);
       const c = document.createElement('div'); c.className = 'cell';
-      const im = document.createElement('img'); im.src = ph.turl; im.loading = 'lazy'; im.alt = ph.name;
+      const im = document.createElement('img'); if (ph.turl) im.src = ph.turl; im.loading = 'lazy'; im.alt = ph.name;
       im.onclick = () => openViewer(ph.id);
       const b = document.createElement('button'); b.className = 'fav' + (ph.fav ? ' on' : ''); b.innerHTML = HEART;
       b.setAttribute('aria-label', 'お気に入り'); b.setAttribute('aria-pressed', ph.fav);
-      b.onclick = async e => {
+      b.onclick = e => {
         e.stopPropagation();
-        await toggleFav(ph);
+        toggleFav(ph);
         if (P.proj.favOnly && !ph.fav) { c.remove(); updateCounts(); if (!visible().length) renderGrid(); }
         else { b.classList.toggle('on', ph.fav); b.setAttribute('aria-pressed', ph.fav); updateCounts(); }
       };
@@ -385,7 +443,7 @@ if ('serviceWorker' in navigator) {
     g.appendChild(frag);
   }
   let favSave = Promise.resolve();
-  async function toggleFav(ph) {
+  function toggleFav(ph) {
     ph.fav = !ph.fav;
     P.proj.favs = P.photos.filter(x => x.fav).map(x => x.id);
     P.proj.updated = Date.now();
@@ -395,7 +453,7 @@ if ('serviceWorker' in navigator) {
   }
   async function setFilter(favOnly) {
     if (P.proj.favOnly === favOnly) return;
-    P.proj.favOnly = favOnly; await putProject(P.proj).catch(() => {});
+    P.proj.favOnly = favOnly; putProject({ ...P.proj }).catch(() => {});
     renderGrid();
   }
   $('fAll').onclick = () => setFilter(false);
@@ -403,62 +461,74 @@ if ('serviceWorker' in navigator) {
   $('backHome').onclick = () => showHome();
   $('playProj').onclick = () => openViewer(null);
   $('renameProj').onclick = async () => {
-    const n = prompt('プロジェクトの名前', P.proj.name);
+    const n = await ask({ title: 'プロジェクトの名前', value: P.proj.name, ok: '変更' });
     if (n === null || !n.trim()) return;
-    P.proj.name = n.trim(); P.proj.updated = Date.now(); await putProject(P.proj);
+    P.proj.name = n.trim(); P.proj.updated = Date.now(); await putProject({ ...P.proj }).catch(() => toast('保存できませんでした'));
     $('projName').textContent = P.proj.name;
   };
   $('delProj').onclick = async () => {
-    if (!confirm('「' + P.proj.name + '」を削除しますか？ アプリに保存した写真のコピーとお気に入りが消えます。ファイルアプリの元の写真は消えません。')) return;
-    await deleteProject(P.proj.id); toast('削除しました'); showHome();
+    const ok = await ask({ title: '「' + P.proj.name + '」を削除しますか？', text: 'アプリに保存した写真のコピーとお気に入りが消えます。ファイルアプリの元の写真は消えません。', ok: '削除', danger: true });
+    if (!ok) return;
+    try { await deleteProject(P.proj.id); toast('削除しました'); } catch { toast('削除できませんでした'); }
+    showHome();
   };
 
   /* ---------- 写真の取り込み ---------- */
-  let importTarget = null;
-  $('newProj').onclick = () => { importTarget = null; $('fileInput').click(); };
-  $('addPhotos').onclick = () => { importTarget = P.proj.id; $('fileInput').click(); };
+  let importTarget = null, picking = false;
+  // ファイルアプリの選択画面を開いている間は、鍵をかけない
+  function pickFiles() { picking = true; $('fileInput').click(); }
+  window.addEventListener('focus', () => { if (picking) setTimeout(() => { picking = false; }, 1500); });
+  $('newProj').onclick = () => { importTarget = null; pickFiles(); };
+  $('addPhotos').onclick = () => { importTarget = P.proj.id; pickFiles(); };
+  $('fileInput').addEventListener('cancel', () => { picking = false; });
   $('fileInput').onchange = e => {
+    picking = false;
     const files = Array.from(e.target.files || []).filter(f => (f.type && f.type.startsWith('image/')) || IMG_EXT.test(f.name));
     e.target.value = '';
     if (!files.length) { toast('画像が見つかりませんでした'); return; }
-    doImport(files, importTarget);
+    doImport(files, importTarget).catch(() => { busy(false); toast('読み込みの途中で問題が起きました'); });
   };
   async function doImport(files, pid) {
-    let proj;
+    let proj = null;
     if (pid == null) {
       let n = 1; try { n = (await listProjects()).length + 1; } catch {}
-      let name = prompt('プロジェクトの名前', 'プロジェクト ' + n);
+      const name = await ask({ title: '新しいプロジェクトの名前', text: files.length + ' 枚の写真を取り込みます', value: 'プロジェクト ' + n, ok: '取り込む' });
       if (name === null) return;
-      proj = { name: name.trim() || ('プロジェクト ' + n), created: Date.now(), updated: Date.now(), favOnly: false };
-    } else proj = P.proj;
-    const existing = new Set(pid == null ? [] : (await getPhotos(pid)).map(x => x.name + '|' + x.size));
+      proj = { name: name.trim() || ('プロジェクト ' + n), created: Date.now(), updated: Date.now(), favOnly: false, favs: [] };
+    } else proj = { ...P.proj };
+    const existing = new Set(pid == null ? [] : (await getItems(pid)).map(x => x.name + '|' + x.size));
     files.sort(byName);
-    const recs = []; let bad = 0, dup = 0;
+    busyCancel = false;
+    let saved = 0, bad = 0, dup = 0, failed = false;
+    let batch = [], batchBytes = 0;
+    const flush = async () => {
+      if (!batch.length) return;
+      if (pid == null) { pid = await putProject(proj); proj.id = pid; }
+      await writeBatch(pid, batch); saved += batch.length; batch = []; batchBytes = 0;
+    };
     for (let i = 0; i < files.length; i++) {
-      busy(true, '読み込み中 ' + (i + 1) + ' / ' + files.length);
+      if (busyCancel) break;
+      busy(true, '読み込み中 ' + (i + 1) + ' / ' + files.length, true);
       const f = files[i];
       if (existing.has(f.name + '|' + f.size)) { dup++; continue; }
-      const th = await makeThumb(f);
-      if (!th) { bad++; continue; }
-      recs.push({ name: f.name, size: f.size, blob: f, thumb: th, fav: false, added: Date.now() });
+      const out = await prepare(f);
+      if (!out) { bad++; continue; }
+      batch.push({ name: f.name, size: f.size, display: out.display, thumb: out.thumb });
+      batchBytes += f.size;
+      // 合計 20MB を超えるか 4 枚たまったら保存（大きな写真は 1 枚ずつ）
+      if (batch.length >= 4 || batchBytes > 20e6) { try { await flush(); } catch { failed = true; break; } }
     }
-    if (!recs.length) { busy(false); toast(dup ? 'すべて追加済みの写真でした' : 'この端末で開ける画像がありませんでした'); return; }
-    try {
-      busy(true, '保存中…');
-      if (pid == null) pid = await putProject(proj);
-      recs.forEach(r => r.projectId = pid);
-      await addPhotoRecs(recs);
-      proj.id = pid; proj.updated = Date.now(); await putProject(proj);
-    } catch {
-      busy(false); toast('保存できませんでした。iPadの空き容量を確認してください'); return;
-    }
+    if (!failed) { try { await flush(); } catch { failed = true; } }
+    if (pid != null) { proj.updated = Date.now(); await putProject(proj).catch(() => {}); }
     busy(false);
-    let msg = recs.length + ' 枚を追加しました';
+    let msg = saved ? saved + ' 枚を取り込みました' : '取り込んだ写真はありません';
+    if (busyCancel) msg += '（途中で中止）';
+    if (failed) msg += '（保存できなくなりました。iPadの空き容量を確認してください）';
     if (dup) msg += '（追加済み ' + dup + ' 枚は飛ばしました）';
-    if (bad) msg += '（開けない形式 ' + bad + ' 枚）';
+    if (bad) msg += '（開けなかった写真 ' + bad + ' 枚）';
     toast(msg);
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
-    openProject(pid);
+    if (pid != null) openProject(pid); else showHome();
   }
 
   /* ---------- 再生 ---------- */
@@ -497,8 +567,17 @@ if ('serviceWorker' in navigator) {
   }
   $('vClose').onclick = e => { e.stopPropagation(); closeViewer(); };
 
-  const urlOf = ph => ph.url || (ph.url = URL.createObjectURL(ph.blob));
-  function makeImg(ph) { const im = new Image(); im.decoding = 'async'; im.alt = ph.name; im.draggable = false; im.src = urlOf(ph); return im; }
+  // 表示用の写真は必要なときに1枚ずつ読み出す
+  function getUrl(ph) {
+    if (ph.url) return Promise.resolve(ph.url);
+    if (!ph._p) ph._p = getBlob(ph.id).then(b => { if (!b) throw 0; ph.url = URL.createObjectURL(b); return ph.url; }).catch(() => { ph._p = null; return ''; });
+    return ph._p;
+  }
+  function makeImg(ph) {
+    const im = new Image(); im.decoding = 'async'; im.alt = ph.name; im.draggable = false;
+    getUrl(ph).then(u => { if (u) im.src = u; else if (im.onerror) im.onerror(); });
+    return im;
+  }
   const wrapI = i => { const n = V.seq.length; return ((i % n) + n) % n; };
 
   // 自動で切り替えるときはフェード
@@ -517,6 +596,7 @@ if ('serviceWorker' in navigator) {
       }));
     };
     im.onload = go; im.onerror = go;
+    if (V.seq.length > 1) { getUrl(V.seq[wrapI(V.pos + 1)]); getUrl(V.seq[wrapI(V.pos - 1)]); }
     updateInfo(); schedule();
   }
   function schedule() { clearTimeout(V.timer); if (!locked && !zoomed() && V.playing && V.seq.length > 1) V.timer = setTimeout(() => showAt(V.pos + 1), secs * 1000); }
@@ -771,15 +851,16 @@ if ('serviceWorker' in navigator) {
   $('changePw').onclick = () => showLock('change');
   $('cancelChange').onclick = () => { $('lock').hidden = true; lockMode = null; };
   $('forgot').onclick = async () => {
-    if (!confirm('パスワードをリセットすると、このアプリに保存したプロジェクトとお気に入りがすべて削除されます。ファイルアプリの元の写真は消えません。リセットしますか？')) return;
+    const ok = await ask({ title: 'パスワードをリセットしますか？', text: 'このアプリに保存したプロジェクトとお気に入りがすべて削除されます。ファイルアプリの元の写真は消えません。', ok: 'リセット', danger: true });
+    if (!ok) return;
     try { if (dbp) (await dbp).close(); } catch {}
     try { localStorage.removeItem(LOCK_KEY); } catch {}
-    const r = indexedDB.deleteDatabase('slideshow-v2');
-    r.onsuccess = r.onerror = r.onblocked = () => location.reload();
+    let left = 2; const next = () => { if (--left === 0) location.reload(); };
+    ['slideshow-v3', 'slideshow-v2'].forEach(n => { const r = indexedDB.deleteDatabase(n); r.onsuccess = r.onerror = r.onblocked = next; });
   };
   // アプリを閉じたり別のアプリに切り替えたら、すぐ鍵をかける
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && lockMode !== 'setup') lockNow(); });
-  window.addEventListener('pagehide', () => { if (lockMode !== 'setup') lockNow(); });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && lockMode !== 'setup' && !picking) lockNow(); });
+  window.addEventListener('pagehide', () => { if (lockMode !== 'setup' && !picking) lockNow(); });
 
   // iPad の Safari で画面全体が拡大されないようにする
   ['gesturestart', 'gesturechange', 'gestureend'].forEach(t => document.addEventListener(t, e => e.preventDefault(), { passive: false }));
