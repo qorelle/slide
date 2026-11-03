@@ -13,110 +13,209 @@
 <link rel="apple-touch-icon" href="icon-180.png">
 <style>
 :root {
-  --bg: #f5f5f7; --stage: #000; --tray: rgba(255,255,255,.88); --line: rgba(0,0,0,.12);
+  --bg: #f5f5f7; --surface: #fff; --line: rgba(0,0,0,.12);
   --fg: #1d1d1f; --muted: #6e6e73; --chip: rgba(0,0,0,.06); --chip-on: #fff;
-  --accent: #1d1d1f; --accent-fg: #fff;
+  --accent: #1d1d1f; --accent-fg: #fff; --danger: #d70015; --heart: #ff375f;
+  --tray: rgba(255,255,255,.88);
   --font-ui: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Helvetica Neue", system-ui, sans-serif;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) { :root {
-  --bg: #111; --tray: rgba(30,30,32,.88); --line: rgba(255,255,255,.12); --fg: #f5f5f7; --muted: #98989d;
-  --chip: rgba(255,255,255,.08); --chip-on: rgba(255,255,255,.2); --accent: #f5f5f7; --accent-fg: #111; color-scheme: dark;
+  --bg: #111; --surface: #1c1c1e; --line: rgba(255,255,255,.12); --fg: #f5f5f7; --muted: #98989d;
+  --chip: rgba(255,255,255,.08); --chip-on: rgba(255,255,255,.2); --accent: #f5f5f7; --accent-fg: #111; --danger: #ff453a;
+  --tray: rgba(30,30,32,.88); color-scheme: dark;
 } }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html, body { height: 100%; margin: 0; }
-body { background: var(--bg); color: var(--fg); font: 14px/1.5 var(--font-ui); overflow: hidden; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
-#stage { position: fixed; inset: 0; background: var(--stage); }
-#stage:empty { background: var(--bg); }
-#stage img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; opacity: 0; transition: opacity .8s ease; }
+body { background: var(--bg); color: var(--fg); font: 15px/1.5 var(--font-ui); -webkit-tap-highlight-color: transparent; overscroll-behavior: none; }
+button { font: inherit; color: inherit; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+
+/* 一覧画面 */
+.screen { position: fixed; inset: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  padding: calc(env(safe-area-inset-top, 0px) + 12px) max(16px, env(safe-area-inset-right, 0px)) calc(env(safe-area-inset-bottom, 0px) + 32px) max(16px, env(safe-area-inset-left, 0px)); }
+.wrap { max-width: 1200px; margin: 0 auto; display: grid; gap: 16px; }
+.bar { display: flex; align-items: center; gap: 12px; min-height: 52px; }
+.bar h1 { margin: 0; font-size: 1.7rem; font-weight: 700; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link { appearance: none; border: 0; background: none; font-size: 1rem; padding: 8px 4px; cursor: pointer; }
+.link.muted { color: var(--muted); }
+.link.danger { color: var(--danger); }
+.btn { appearance: none; border: 1px solid var(--line); background: var(--chip); font-size: .92rem; font-weight: 500; padding: 10px 16px; border-radius: 10px; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; }
+.btn.primary { background: var(--accent); color: var(--accent-fg); border-color: transparent; }
+.btn:disabled { opacity: .4; cursor: default; }
+.btn svg { width: 14px; height: 14px; fill: currentColor; }
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; }
+.spacer { flex: 1; }
+.seg { display: inline-flex; background: var(--chip); border-radius: 10px; padding: 2px; gap: 2px; }
+.seg button { appearance: none; border: 0; background: transparent; color: var(--muted); font-size: .88rem; padding: 7px 14px; border-radius: 8px; cursor: pointer; font-variant-numeric: tabular-nums; }
+.seg button[aria-pressed=true] { background: var(--chip-on); color: var(--fg); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 20px 16px; }
+.card { appearance: none; border: 0; padding: 0; background: none; text-align: left; cursor: pointer; display: grid; gap: 8px; min-width: 0; }
+.card .cover { aspect-ratio: 4 / 3; width: 100%; max-width: 100%; border-radius: 12px; background: var(--chip); overflow: hidden; }
+.card .cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.card .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card .meta { font-size: .85rem; color: var(--muted); margin-top: -6px; font-variant-numeric: tabular-nums; }
+
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 3px; }
+.cell { position: relative; aspect-ratio: 1; max-width: 100%; background: var(--chip); overflow: hidden; }
+.cell img { width: 100%; height: 100%; object-fit: cover; display: block; cursor: pointer; }
+.fav { position: absolute; right: 4px; bottom: 4px; width: 38px; height: 38px; border-radius: 50%; border: 0; background: transparent; display: grid; place-items: center; cursor: pointer; padding: 0; }
+.fav svg, .vheart svg, #pop svg { fill: none; stroke: #fff; stroke-width: 2; }
+.fav svg { width: 22px; height: 22px; filter: drop-shadow(0 1px 2px rgba(0,0,0,.5)); }
+.on > svg { fill: var(--heart); stroke: var(--heart); }
+.emptyBox { padding: 56px 16px; text-align: center; color: var(--muted); display: grid; gap: 14px; justify-items: center; line-height: 1.7; }
+
+/* 再生画面（常に暗い） */
+#viewer { position: fixed; inset: 0; background: #000; z-index: 10; color: #f5f5f7;
+  --tray: rgba(30,30,32,.86); --line: rgba(255,255,255,.12); --fg: #f5f5f7; --muted: #98989d; --chip: rgba(255,255,255,.08); --chip-on: rgba(255,255,255,.2); }
+#stage { position: absolute; inset: 0; overflow: hidden; touch-action: none; -webkit-user-select: none; user-select: none; }
+#stage img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; opacity: 0; transition: opacity .8s ease; pointer-events: none; -webkit-user-drag: none; }
 #stage.cover img { object-fit: cover; }
 #stage img.on { opacity: 1; }
+#stage img.drag { transition: none; }
+#stage img.slide { transition: transform .3s cubic-bezier(.2,.7,.2,1); }
 
-#empty { position: fixed; inset: 0; display: grid; place-items: center; padding: 24px max(16px, env(safe-area-inset-right, 0px)) 24px max(16px, env(safe-area-inset-left, 0px)); }
-.welcome { max-width: 26rem; display: grid; gap: 16px; text-align: center; justify-items: center; }
-.welcome h1 { margin: 0; font-size: 1.5rem; font-weight: 600; }
-.welcome p { margin: 0; color: var(--muted); line-height: 1.7; font-size: .92rem; }
-.welcome .fmt { font-size: .78rem; color: var(--muted); }
-.picks { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
+#vTop { position: absolute; z-index: 6; top: calc(env(safe-area-inset-top, 0px) + 12px); left: max(16px, env(safe-area-inset-left, 0px)); right: max(16px, env(safe-area-inset-right, 0px)); display: flex; justify-content: space-between; transition: opacity .3s; }
+#vTop button { width: 46px; height: 46px; border-radius: 50%; border: 0; background: rgba(0,0,0,.45); color: #fff; display: grid; place-items: center; cursor: pointer; padding: 0; }
+#vTop svg { width: 22px; height: 22px; }
+#vClose svg { stroke: #fff; stroke-width: 2; fill: none; }
+.away { opacity: 0; pointer-events: none; }
 
-.btn { appearance: none; border: 1px solid var(--line); background: var(--chip); color: var(--fg); font: inherit; font-size: .92rem; font-weight: 500; padding: 10px 16px; border-radius: 10px; cursor: pointer; }
-.btn.primary { background: var(--accent); color: var(--accent-fg); border-color: transparent; padding: 12px 24px; }
-.btn:focus-visible, .seg button:focus-visible, input:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
-
-#tray { position: fixed; left: 0; right: 0; bottom: 0; background: var(--tray); -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); border-top: 1px solid var(--line);
-  padding: 14px max(16px, env(safe-area-inset-right, 0px)) calc(14px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
-  transition: transform .3s ease; z-index: 5; }
+#tray { position: absolute; left: 0; right: 0; bottom: 0; z-index: 6; background: var(--tray); -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); border-top: 1px solid var(--line);
+  padding: 14px max(16px, env(safe-area-inset-right, 0px)) calc(14px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); transition: transform .3s ease, opacity .3s; }
 #tray.away { transform: translateY(110%); }
 .row { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 22px; }
 .group { display: flex; align-items: center; gap: 10px; }
 .label { font-size: .8rem; color: var(--muted); }
 .sec { display: flex; align-items: center; gap: 10px; }
-.sec input[type=range] { width: 160px; accent-color: var(--fg); }
+.sec input[type=range] { width: 160px; accent-color: #f5f5f7; }
 .sec output { font-variant-numeric: tabular-nums; min-width: 3.6em; }
-.seg { display: inline-flex; background: var(--chip); border-radius: 10px; padding: 2px; gap: 2px; }
-.seg button { appearance: none; border: 0; background: transparent; color: var(--muted); font: inherit; font-size: .88rem; padding: 7px 14px; border-radius: 8px; cursor: pointer; }
-.seg button[aria-pressed=true] { background: var(--chip-on); color: var(--fg); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
-.spacer { flex: 1; }
-.count { font-size: .8rem; color: var(--muted); font-variant-numeric: tabular-nums; }
-.play { width: 46px; height: 46px; padding: 0; display: grid; place-items: center; border-radius: 50%; }
-.play svg { width: 18px; height: 18px; fill: currentColor; }
-.note { margin-top: 10px; font-size: .78rem; color: var(--muted); }
+.count { font-size: .85rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.play { width: 46px; height: 46px; padding: 0; justify-content: center; border-radius: 50%; }
+.play svg { width: 18px; height: 18px; }
 
-#toast { position: fixed; top: calc(16px + env(safe-area-inset-top, 0px)); left: 50%; transform: translateX(-50%); background: var(--tray); color: var(--fg); border: 1px solid var(--line); padding: 8px 14px; border-radius: 999px; font-size: .85rem; opacity: 0; transition: opacity .25s; pointer-events: none; z-index: 6; max-width: calc(100% - 32px); }
+#pop { position: absolute; left: 50%; top: 50%; width: 110px; height: 110px; margin: -55px 0 0 -55px; pointer-events: none; opacity: 0; transform: scale(.6); z-index: 5; }
+#pop svg { width: 100%; height: 100%; filter: drop-shadow(0 2px 10px rgba(0,0,0,.4)); }
+#pop.show { animation: pop .7s ease forwards; }
+@keyframes pop { 0% { opacity: 0; transform: scale(.6); } 25% { opacity: 1; transform: scale(1.05); } 60% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(1); } }
+
+#busy { position: fixed; inset: 0; z-index: 20; background: rgba(0,0,0,.45); display: grid; place-items: center; }
+#busy div { background: var(--surface); color: var(--fg); padding: 18px 24px; border-radius: 14px; font-variant-numeric: tabular-nums; }
+#toast { position: fixed; top: calc(16px + env(safe-area-inset-top, 0px)); left: 50%; transform: translateX(-50%); background: var(--tray); color: var(--fg); border: 1px solid var(--line); padding: 8px 16px; border-radius: 999px; font-size: .88rem; opacity: 0; transition: opacity .25s; pointer-events: none; z-index: 30; max-width: calc(100% - 32px); text-align: center; -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); }
 #toast.show { opacity: 1; }
-@media (max-width: 560px) { .sec input[type=range] { width: 120px; } }
-@media (prefers-reduced-motion: reduce) { #stage img, #tray { transition: none; } }
+#lock { position: fixed; inset: 0; z-index: 50; background: var(--bg); display: grid; place-items: center;
+  padding: 24px max(16px, env(safe-area-inset-right, 0px)) 24px max(16px, env(safe-area-inset-left, 0px)); }
+.lockBox { width: 100%; max-width: 320px; display: grid; gap: 14px; justify-items: center; text-align: center; }
+.lockBox svg { width: 40px; height: 40px; fill: none; stroke: var(--fg); stroke-width: 1.6; }
+.lockBox h2 { margin: 0; font-size: 1.25rem; font-weight: 600; }
+.lockMsg { margin: 0; min-height: 1.5em; font-size: .88rem; color: var(--muted); }
+.lockMsg.err { color: var(--danger); }
+#lockForm { width: 100%; display: grid; gap: 10px; }
+#lockForm input { width: 100%; font: inherit; font-size: 1.1rem; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); text-align: center; }
+#lockForm .btn { justify-content: center; padding: 12px; }
+.shake { animation: shake .35s; }
+@keyframes shake { 20%, 60% { transform: translateX(-8px); } 40%, 80% { transform: translateX(8px); } }
+@media (max-width: 560px) { .sec input[type=range] { width: 110px; } .grid { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); } }
+@media (prefers-reduced-motion: reduce) { #stage img, #tray, #vTop { transition: none; } #pop.show { animation-duration: .01s; } }
 </style>
 </head>
 <body>
 
-<div id="stage"></div>
-
-<div id="empty">
-  <div class="welcome">
-    <h1>スライドショー</h1>
-    <p>ファイルアプリでフォルダを開き、右上の「選択」→「すべてを選択」→「開く」で画像を読み込みます。選んだ写真はこのアプリに保存され、次回は自動で始まります。</p>
-    <div class="picks">
-      <button class="btn primary" id="pickFiles">写真を選ぶ</button>
+<!-- プロジェクト一覧 -->
+<section id="home" class="screen">
+  <div class="wrap">
+    <div class="bar">
+      <h1>スライドショー</h1>
+      <button class="link muted" id="changePw">パスワード変更</button>
+      <button class="btn primary" id="newProj">新しいプロジェクト</button>
     </div>
-    <div class="fmt">JPEG、PNG、HEIC、WebP、GIF、AVIF、TIFF、BMP に対応</div>
+    <div class="cards" id="projList"></div>
+    <div class="emptyBox" id="homeEmpty" hidden>
+      <div>プロジェクトはまだありません。<br>「新しいプロジェクト」を押して、ファイルアプリのフォルダから写真を選んでください。<br>フォルダの中で右上の「選択」→「すべてを選択」→「開く」でまとめて選べます。</div>
+    </div>
+  </div>
+</section>
+
+<!-- プロジェクトの中身 -->
+<section id="project" class="screen" hidden>
+  <div class="wrap">
+    <div class="bar">
+      <button class="link" id="backHome" aria-label="プロジェクト一覧に戻る">‹ 一覧</button>
+      <h1 id="projName"></h1>
+      <button class="link muted" id="renameProj">名前を変更</button>
+    </div>
+    <div class="toolbar">
+      <button class="btn primary" id="playProj"><svg viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z"/></svg>再生</button>
+      <div class="seg" role="group" aria-label="表示する写真">
+        <button id="fAll" aria-pressed="true">すべて</button>
+        <button id="fFav" aria-pressed="false">お気に入り</button>
+      </div>
+      <span class="spacer"></span>
+      <button class="btn" id="addPhotos">写真を追加</button>
+      <button class="link danger" id="delProj">削除</button>
+    </div>
+    <div class="grid" id="grid"></div>
+    <div class="emptyBox" id="gridEmpty" hidden></div>
+  </div>
+</section>
+
+<!-- 再生 -->
+<div id="viewer" hidden>
+  <div id="stage"></div>
+  <div id="pop"></div>
+  <div id="vTop">
+    <button id="vClose" aria-label="閉じる"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    <button id="vHeart" class="vheart" aria-label="お気に入り" aria-pressed="false"></button>
+  </div>
+  <div id="tray">
+    <div class="row">
+      <button class="btn play" id="playBtn" aria-label="一時停止"><svg viewBox="0 0 24 24" id="playIcon"></svg></button>
+      <div class="group">
+        <span class="label">間隔</span>
+        <div class="sec">
+          <input type="range" id="secs" min="1" max="60" step="1" value="5" aria-label="切り替えの秒数">
+          <output id="secsOut" for="secs">5 秒</output>
+        </div>
+      </div>
+      <div class="group">
+        <span class="label">順番</span>
+        <div class="seg" role="group" aria-label="順番">
+          <button id="ordName" aria-pressed="true">名前順</button>
+          <button id="ordRand" aria-pressed="false">ランダム</button>
+        </div>
+      </div>
+      <div class="group">
+        <span class="label">表示</span>
+        <div class="seg" role="group" aria-label="表示方法">
+          <button id="fitContain" aria-pressed="true">全体</button>
+          <button id="fitCover" aria-pressed="false">画面いっぱい</button>
+        </div>
+      </div>
+      <span class="spacer"></span>
+      <span class="count" id="count"></span>
+    </div>
   </div>
 </div>
 
 <input type="file" id="fileInput" multiple accept="image/*,.heic,.heif,.webp,.avif,.tif,.tiff,.bmp,.gif,.png,.jpg,.jpeg" hidden>
-
-<div id="tray" hidden>
-  <div class="row">
-    <button class="btn play" id="playBtn" aria-label="一時停止"><svg viewBox="0 0 24 24" id="playIcon"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg></button>
-    <div class="group">
-      <span class="label">間隔</span>
-      <div class="sec">
-        <input type="range" id="secs" min="1" max="60" step="1" value="5" aria-label="切り替えの秒数">
-        <output id="secsOut" for="secs">5 秒</output>
-      </div>
-    </div>
-    <div class="group">
-      <span class="label">順番</span>
-      <div class="seg" role="group" aria-label="順番">
-        <button id="ordName" aria-pressed="true">名前順</button>
-        <button id="ordRand" aria-pressed="false">ランダム</button>
-      </div>
-    </div>
-    <div class="group">
-      <span class="label">表示</span>
-      <div class="seg" role="group" aria-label="表示方法">
-        <button id="fitContain" aria-pressed="true">全体</button>
-        <button id="fitCover" aria-pressed="false">画面いっぱい</button>
-      </div>
-    </div>
-    <span class="spacer"></span>
-    <span class="count" id="count">0 / 0</span>
-    <button class="btn" id="reBtn">写真を選び直す</button>
+<div id="lock">
+  <div class="lockBox">
+    <svg viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg>
+    <h2 id="lockTitle">パスワードを入力</h2>
+    <p class="lockMsg" id="lockMsg"></p>
+    <form id="lockForm" autocomplete="off">
+      <input type="password" id="pw1" aria-label="パスワード" placeholder="パスワード">
+      <input type="password" id="pw2" aria-label="もう一度入力" placeholder="もう一度入力" hidden>
+      <button class="btn primary" type="submit" id="lockBtn">開く</button>
+    </form>
+    <button class="link muted" id="cancelChange" hidden>キャンセル</button>
+    <button class="link muted" id="forgot">パスワードを忘れた場合</button>
   </div>
-  <div class="note" id="note" hidden></div>
 </div>
 
+<div id="busy" hidden><div id="busyText">読み込み中…</div></div>
 <div id="toast"></div>
 
 <script>
@@ -126,195 +225,484 @@ if ('serviceWorker' in navigator) {
 
 (() => {
   const $ = id => document.getElementById(id);
-  const stage = $('stage'), tray = $('tray'), empty = $('empty');
+  const HEART = '<svg viewBox="0 0 24 24"><path d="M12 20.3s-7.4-4.5-9.2-9.1C1.5 7.9 3.5 4.6 7 4.6c2 0 3.5 1.1 5 3 1.5-1.9 3-3 5-3 3.5 0 5.5 3.3 4.2 6.6-1.8 4.6-9.2 9.1-9.2 9.1z"/></svg>';
   const IMG_EXT = /\.(jpe?g|png|gif|webp|avif|heic|heif|tiff?|bmp|jfif|apng)$/i;
+  const collator = new Intl.Collator('ja', { numeric: true, sensitivity: 'base' });
+  const byName = (a, b) => collator.compare(a.name, b.name);
 
   const store = {
     get(k, d) { try { const v = localStorage.getItem('ss.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
     set(k, v) { try { localStorage.setItem('ss.' + k, JSON.stringify(v)); } catch {} }
   };
+  let secs = store.get('secs', 5), random = store.get('random', false), cover = store.get('cover', false);
 
-  // 選んだ写真をアプリ内に保存する
-  const db = {
-    open() {
-      return new Promise((res, rej) => {
-        const r = indexedDB.open('slideshow', 1);
-        r.onupgradeneeded = () => r.result.createObjectStore('photos', { autoIncrement: true });
-        r.onsuccess = () => res(r.result);
-        r.onerror = () => rej(r.error);
-      });
-    },
-    async save(files) {
-      const d = await this.open();
-      return new Promise((res, rej) => {
-        const tx = d.transaction('photos', 'readwrite');
-        const s = tx.objectStore('photos');
-        s.clear();
-        files.forEach(f => s.put({ name: f.name, blob: f }));
-        tx.oncomplete = () => res();
-        tx.onerror = () => rej(tx.error);
-        tx.onabort = () => rej(tx.error);
-      });
-    },
-    async load() {
-      const d = await this.open();
-      return new Promise((res, rej) => {
-        const r = d.transaction('photos').objectStore('photos').getAll();
-        r.onsuccess = () => res(r.result || []);
-        r.onerror = () => rej(r.error);
-      });
+  /* ---------- 保存（iPadの中） ---------- */
+  let dbp = null;
+  function openDB() {
+    if (!dbp) dbp = new Promise((res, rej) => {
+      const r = indexedDB.open('slideshow-v2', 1);
+      r.onupgradeneeded = () => {
+        const d = r.result;
+        d.createObjectStore('projects', { keyPath: 'id', autoIncrement: true });
+        d.createObjectStore('photos', { keyPath: 'id', autoIncrement: true }).createIndex('project', 'projectId');
+      };
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => { dbp = null; rej(r.error); };
+    });
+    return dbp;
+  }
+  const reqP = r => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+  const doneP = t => new Promise((res, rej) => { t.oncomplete = () => res(); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error); });
+
+  async function listProjects() { const d = await openDB(); return reqP(d.transaction('projects').objectStore('projects').getAll()); }
+  async function getProject(id) { const d = await openDB(); return reqP(d.transaction('projects').objectStore('projects').get(id)); }
+  async function getPhotos(pid) { const d = await openDB(); return reqP(d.transaction('photos').objectStore('photos').index('project').getAll(pid)); }
+  async function putProject(p) {
+    const d = await openDB(); const t = d.transaction('projects', 'readwrite'); const dn = doneP(t);
+    const id = await reqP(t.objectStore('projects').put(p)); await dn; return id;
+  }
+  async function addPhotoRecs(recs) {
+    const d = await openDB(); const t = d.transaction('photos', 'readwrite'); const dn = doneP(t);
+    const s = t.objectStore('photos'); recs.forEach(r => s.put(r)); return dn;
+  }
+  async function setFav(id, fav) {
+    const d = await openDB(); const t = d.transaction('photos', 'readwrite'); const dn = doneP(t);
+    const s = t.objectStore('photos'); const r = s.get(id);
+    r.onsuccess = () => { const v = r.result; if (v) { v.fav = fav; s.put(v); } };
+    return dn;
+  }
+  async function deleteProject(pid) {
+    const d = await openDB(); const t = d.transaction(['projects', 'photos'], 'readwrite'); const dn = doneP(t);
+    t.objectStore('projects').delete(pid);
+    const ps = t.objectStore('photos'); const r = ps.index('project').getAllKeys(pid);
+    r.onsuccess = () => r.result.forEach(k => ps.delete(k));
+    return dn;
+  }
+
+  /* ---------- 共通 ---------- */
+  let toastT;
+  function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 2800); }
+  function busy(on, text) { $('busy').hidden = !on; if (text) $('busyText').textContent = text; }
+  function setSeg(a, b, firstOn) { $(a).setAttribute('aria-pressed', firstOn); $(b).setAttribute('aria-pressed', !firstOn); }
+  function showScreen(id) { ['home', 'project'].forEach(s => $(s).hidden = s !== id); }
+
+  function makeThumb(blob) {
+    return new Promise(res => {
+      const url = URL.createObjectURL(blob); const img = new Image();
+      img.onload = () => {
+        try {
+          const w0 = img.naturalWidth, h0 = img.naturalHeight; if (!w0 || !h0) throw 0;
+          const k = Math.min(1, 480 / Math.min(w0, h0));
+          const c = document.createElement('canvas'); c.width = Math.round(w0 * k); c.height = Math.round(h0 * k);
+          c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+          c.toBlob(b => { URL.revokeObjectURL(url); res(b); }, 'image/jpeg', 0.82);
+        } catch { URL.revokeObjectURL(url); res(null); }
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); res(null); };
+      img.src = url;
+    });
+  }
+
+  /* ---------- 一覧画面 ---------- */
+  let homeUrls = [];
+  async function showHome() {
+    leaveProject(); showScreen('home');
+    homeUrls.forEach(u => URL.revokeObjectURL(u)); homeUrls = [];
+    let list = [];
+    try { list = await listProjects(); } catch { toast('保存データを開けませんでした'); }
+    list.sort((a, b) => (b.updated || 0) - (a.updated || 0));
+    const box = $('projList'); box.innerHTML = '';
+    $('homeEmpty').hidden = list.length > 0;
+    for (const p of list) {
+      const photos = (await getPhotos(p.id)).sort(byName);
+      const favs = photos.filter(x => x.fav);
+      const coverPh = favs[0] || photos[0];
+      const card = document.createElement('button'); card.className = 'card';
+      const cv = document.createElement('div'); cv.className = 'cover';
+      if (coverPh) { const u = URL.createObjectURL(coverPh.thumb || coverPh.blob); homeUrls.push(u); const im = document.createElement('img'); im.src = u; im.alt = ''; cv.appendChild(im); }
+      const nm = document.createElement('div'); nm.className = 'name'; nm.textContent = p.name;
+      const mt = document.createElement('div'); mt.className = 'meta'; mt.textContent = photos.length + ' 枚 · お気に入り ' + favs.length;
+      card.append(cv, nm, mt);
+      card.onclick = () => openProject(p.id);
+      box.appendChild(card);
     }
+  }
+
+  /* ---------- プロジェクト画面 ---------- */
+  let P = null; // { proj, photos }
+  function leaveProject() {
+    if (!P) return;
+    P.photos.forEach(x => { if (x.turl) URL.revokeObjectURL(x.turl); if (x.url) URL.revokeObjectURL(x.url); });
+    P = null;
+  }
+  async function openProject(id) {
+    leaveProject();
+    const proj = await getProject(id);
+    if (!proj) { showHome(); return; }
+    const photos = (await getPhotos(id)).sort(byName);
+    P = { proj, photos };
+    $('projName').textContent = proj.name;
+    showScreen('project'); $('project').scrollTop = 0;
+    renderGrid();
+  }
+  const visible = () => P.photos.filter(x => !P.proj.favOnly || x.fav);
+  function updateCounts() {
+    const favN = P.photos.filter(x => x.fav).length;
+    $('fAll').textContent = 'すべて ' + P.photos.length;
+    $('fFav').textContent = 'お気に入り ' + favN;
+    setSeg('fAll', 'fFav', !P.proj.favOnly);
+    $('playProj').disabled = visible().length === 0;
+  }
+  function renderGrid() {
+    const g = $('grid'); g.innerHTML = '';
+    const vis = visible();
+    updateCounts();
+    const em = $('gridEmpty');
+    em.hidden = vis.length > 0;
+    em.textContent = P.photos.length ? 'お気に入りはまだありません。写真の右下のハートを押すか、再生中に画面をダブルタップすると追加できます。' : '写真がありません。「写真を追加」から選んでください。';
+    const frag = document.createDocumentFragment();
+    vis.forEach(ph => {
+      if (!ph.turl) ph.turl = URL.createObjectURL(ph.thumb || ph.blob);
+      const c = document.createElement('div'); c.className = 'cell';
+      const im = document.createElement('img'); im.src = ph.turl; im.loading = 'lazy'; im.alt = ph.name;
+      im.onclick = () => openViewer(ph.id);
+      const b = document.createElement('button'); b.className = 'fav' + (ph.fav ? ' on' : ''); b.innerHTML = HEART;
+      b.setAttribute('aria-label', 'お気に入り'); b.setAttribute('aria-pressed', ph.fav);
+      b.onclick = async e => {
+        e.stopPropagation();
+        await toggleFav(ph);
+        if (P.proj.favOnly && !ph.fav) { c.remove(); updateCounts(); if (!visible().length) renderGrid(); }
+        else { b.classList.toggle('on', ph.fav); b.setAttribute('aria-pressed', ph.fav); updateCounts(); }
+      };
+      c.append(im, b); frag.appendChild(c);
+    });
+    g.appendChild(frag);
+  }
+  async function toggleFav(ph) {
+    ph.fav = !ph.fav;
+    try { await setFav(ph.id, ph.fav); P.proj.updated = Date.now(); putProject(P.proj).catch(() => {}); }
+    catch { ph.fav = !ph.fav; toast('保存できませんでした'); }
+  }
+  async function setFilter(favOnly) {
+    if (P.proj.favOnly === favOnly) return;
+    P.proj.favOnly = favOnly; await putProject(P.proj).catch(() => {});
+    renderGrid();
+  }
+  $('fAll').onclick = () => setFilter(false);
+  $('fFav').onclick = () => setFilter(true);
+  $('backHome').onclick = () => showHome();
+  $('playProj').onclick = () => openViewer(null);
+  $('renameProj').onclick = async () => {
+    const n = prompt('プロジェクトの名前', P.proj.name);
+    if (n === null || !n.trim()) return;
+    P.proj.name = n.trim(); P.proj.updated = Date.now(); await putProject(P.proj);
+    $('projName').textContent = P.proj.name;
+  };
+  $('delProj').onclick = async () => {
+    if (!confirm('「' + P.proj.name + '」を削除しますか？ アプリに保存した写真のコピーとお気に入りが消えます。ファイルアプリの元の写真は消えません。')) return;
+    await deleteProject(P.proj.id); toast('削除しました'); showHome();
   };
 
-  let items = [], order = [], pos = 0, timer = null, playing = true, current = null, hideTimer = null, direction = 1;
-  let secs = store.get('secs', 5), random = store.get('random', false), cover = store.get('cover', false);
-  const collator = new Intl.Collator('ja', { numeric: true, sensitivity: 'base' });
+  /* ---------- 写真の取り込み ---------- */
+  let importTarget = null;
+  $('newProj').onclick = () => { importTarget = null; $('fileInput').click(); };
+  $('addPhotos').onclick = () => { importTarget = P.proj.id; $('fileInput').click(); };
+  $('fileInput').onchange = e => {
+    const files = Array.from(e.target.files || []).filter(f => (f.type && f.type.startsWith('image/')) || IMG_EXT.test(f.name));
+    e.target.value = '';
+    if (!files.length) { toast('画像が見つかりませんでした'); return; }
+    doImport(files, importTarget);
+  };
+  async function doImport(files, pid) {
+    let proj;
+    if (pid == null) {
+      let n = 1; try { n = (await listProjects()).length + 1; } catch {}
+      let name = prompt('プロジェクトの名前', 'プロジェクト ' + n);
+      if (name === null) return;
+      proj = { name: name.trim() || ('プロジェクト ' + n), created: Date.now(), updated: Date.now(), favOnly: false };
+    } else proj = P.proj;
+    const existing = new Set(pid == null ? [] : (await getPhotos(pid)).map(x => x.name + '|' + x.size));
+    files.sort(byName);
+    const recs = []; let bad = 0, dup = 0;
+    for (let i = 0; i < files.length; i++) {
+      busy(true, '読み込み中 ' + (i + 1) + ' / ' + files.length);
+      const f = files[i];
+      if (existing.has(f.name + '|' + f.size)) { dup++; continue; }
+      const th = await makeThumb(f);
+      if (!th) { bad++; continue; }
+      recs.push({ name: f.name, size: f.size, blob: f, thumb: th, fav: false, added: Date.now() });
+    }
+    if (!recs.length) { busy(false); toast(dup ? 'すべて追加済みの写真でした' : 'この端末で開ける画像がありませんでした'); return; }
+    try {
+      busy(true, '保存中…');
+      if (pid == null) pid = await putProject(proj);
+      recs.forEach(r => r.projectId = pid);
+      await addPhotoRecs(recs);
+      proj.id = pid; proj.updated = Date.now(); await putProject(proj);
+    } catch {
+      busy(false); toast('保存できませんでした。iPadの空き容量を確認してください'); return;
+    }
+    busy(false);
+    let msg = recs.length + ' 枚を追加しました';
+    if (dup) msg += '（追加済み ' + dup + ' 枚は飛ばしました）';
+    if (bad) msg += '（開けない形式 ' + bad + ' 枚）';
+    toast(msg);
+    if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+    openProject(pid);
+  }
+
+  /* ---------- 再生 ---------- */
+  const stage = $('stage');
+  const V = { base: [], seq: [], pos: 0, timer: null, playing: true, cur: null, anim: false, dirty: false, hideT: null, wake: null };
 
   $('secs').value = secs; $('secsOut').textContent = secs + ' 秒';
   setSeg('ordName', 'ordRand', !random);
   setSeg('fitContain', 'fitCover', !cover);
   stage.classList.toggle('cover', cover);
 
-  $('pickFiles').onclick = () => $('fileInput').click();
-  $('reBtn').onclick = e => { e.stopPropagation(); $('fileInput').click(); };
-  $('fileInput').onchange = async e => {
-    const files = Array.from(e.target.files || []).filter(f => (f.type && f.type.startsWith('image/')) || IMG_EXT.test(f.name));
-    e.target.value = '';
-    if (!files.length) { toast('画像が見つかりませんでした'); return; }
-    start(files.map(f => ({ name: f.name, blob: f })));
-    try {
-      if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
-      toast('写真を保存しています…');
-      await db.save(files);
-      toast(files.length + ' 枚を保存しました。次回は自動で始まります');
-    } catch {
-      toast('写真が多すぎて保存できませんでした。今回はそのまま再生します');
-    }
-  };
-
-  function setSeg(a, b, firstOn) { $(a).setAttribute('aria-pressed', firstOn); $(b).setAttribute('aria-pressed', !firstOn); }
-
-  function start(list) {
-    items.forEach(it => URL.revokeObjectURL(it.url));
-    list.sort((a, b) => collator.compare(a.name, b.name));
-    items = list.map(x => ({ name: x.name, url: URL.createObjectURL(x.blob), bad: false }));
-    $('note').hidden = true;
-    stage.innerHTML = ''; current = null;
-    buildOrder(); pos = 0;
-    empty.hidden = true; tray.hidden = false;
-    playing = true; updatePlayIcon();
-    show();
-    requestWake();
-    bumpTray();
+  function shuffled(a) { const s = a.slice(); for (let i = s.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [s[i], s[j]] = [s[j], s[i]]; } return s; }
+  function buildSeq(keep) {
+    V.seq = random ? shuffled(V.base) : V.base.slice();
+    let k = keep ? V.seq.indexOf(keep) : 0; if (k < 0) k = 0;
+    if (random && k > 0) { [V.seq[0], V.seq[k]] = [V.seq[k], V.seq[0]]; k = 0; }
+    V.pos = k;
   }
-
-  function buildOrder() {
-    order = items.map((_, i) => i);
-    if (random) for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
+  function openViewer(startId) {
+    V.base = visible();
+    if (!V.base.length) { toast('再生できる写真がありません'); return; }
+    buildSeq(V.base.find(x => x.id === startId));
+    V.dirty = false;
+    $('viewer').hidden = false;
+    stage.innerHTML = ''; V.cur = null;
+    V.playing = true; updatePlayIcon();
+    showAt(V.pos);
+    requestWake(); bump();
   }
-
-  function step(d) {
-    if (!items.length) return;
-    direction = d >= 0 ? 1 : -1;
-    pos += d;
-    if (pos >= order.length) {
-      const last = order[order.length - 1];
-      buildOrder(); pos = 0;
-      if (random && order.length > 1 && order[0] === last) [order[0], order[1]] = [order[1], order[0]];
-    }
-    if (pos < 0) pos = order.length - 1;
-    show();
+  function closeViewer() {
+    clearTimeout(V.timer); clearTimeout(V.hideT);
+    $('viewer').hidden = true; stage.innerHTML = ''; V.cur = null;
+    try { if (V.wake) V.wake.release(); } catch {} V.wake = null;
+    if (V.dirty && P) { const sc = $('project').scrollTop; renderGrid(); $('project').scrollTop = sc; }
   }
+  $('vClose').onclick = e => { e.stopPropagation(); closeViewer(); };
 
-  function show() {
-    clearTimeout(timer);
-    if (!items.some(i => !i.bad)) { $('note').textContent = '表示できる画像がありませんでした'; $('note').hidden = false; return; }
-    const it = items[order[pos]];
-    if (it.bad) { step(direction); return; }
-    const img = new Image();
-    img.alt = it.name;
-    img.decoding = 'async';
-    img.onload = () => {
-      stage.appendChild(img);
-      const prev = current; current = img;
+  const urlOf = ph => ph.url || (ph.url = URL.createObjectURL(ph.blob));
+  function makeImg(ph) { const im = new Image(); im.decoding = 'async'; im.alt = ph.name; im.draggable = false; im.src = urlOf(ph); return im; }
+  const wrapI = i => { const n = V.seq.length; return ((i % n) + n) % n; };
+
+  // 自動で切り替えるときはフェード
+  function showAt(i) {
+    clearTimeout(V.timer);
+    V.pos = wrapI(i);
+    const im = makeImg(V.seq[V.pos]);
+    V.cur = im;
+    const go = () => {
+      if (V.cur !== im || V.anim) return;
+      stage.appendChild(im);
       requestAnimationFrame(() => requestAnimationFrame(() => {
-        img.classList.add('on');
-        if (prev) { prev.classList.remove('on'); setTimeout(() => prev.remove(), 1000); }
+        im.classList.add('on');
+        stage.querySelectorAll('img').forEach(x => { if (x !== im) { x.classList.remove('on'); setTimeout(() => x.remove(), 900); } });
       }));
-      $('count').textContent = (pos + 1) + ' / ' + order.length;
-      schedule();
     };
-    img.onerror = () => {
-      it.bad = true;
-      $('note').textContent = items.filter(i => i.bad).length + ' 枚はこの端末で開けない形式だったので飛ばしています';
-      $('note').hidden = false;
-      step(direction);
-    };
-    img.src = it.url;
+    im.onload = go; im.onerror = go;
+    updateInfo(); schedule();
   }
-
-  function schedule() { clearTimeout(timer); if (playing) timer = setTimeout(() => step(1), secs * 1000); }
-
+  function schedule() { clearTimeout(V.timer); if (!locked && V.playing && V.seq.length > 1) V.timer = setTimeout(() => showAt(V.pos + 1), secs * 1000); }
+  function updateInfo() {
+    $('count').textContent = (V.pos + 1) + ' / ' + V.seq.length;
+    const ph = V.seq[V.pos]; const h = $('vHeart');
+    h.innerHTML = HEART; h.classList.toggle('on', !!(ph && ph.fav)); h.setAttribute('aria-pressed', !!(ph && ph.fav));
+  }
   function updatePlayIcon() {
-    $('playIcon').innerHTML = playing ? '<path d="M6 5h4v14H6zM14 5h4v14h-4z"/>' : '<path d="M7 4.5v15l12-7.5z"/>';
-    $('playBtn').setAttribute('aria-label', playing ? '一時停止' : '再生');
+    $('playIcon').innerHTML = V.playing ? '<path d="M6 5h4v14H6zM14 5h4v14h-4z"/>' : '<path d="M7 4.5v15l12-7.5z"/>';
+    $('playBtn').setAttribute('aria-label', V.playing ? '一時停止' : '再生');
   }
 
-  $('playBtn').onclick = e => { e.stopPropagation(); playing = !playing; updatePlayIcon(); playing ? schedule() : clearTimeout(timer); bumpTray(); };
+  // お気に入り
+  async function favCurrent() {
+    const ph = V.seq[V.pos]; if (!ph) return;
+    await toggleFav(ph); V.dirty = true; updateInfo();
+    const pop = $('pop'); pop.innerHTML = HEART; pop.classList.toggle('on', ph.fav);
+    pop.classList.remove('show'); void pop.offsetWidth; pop.classList.add('show');
+    toast(ph.fav ? 'お気に入りに追加しました' : 'お気に入りから外しました');
+  }
+  $('vHeart').onclick = e => { e.stopPropagation(); favCurrent(); bump(); };
 
-  $('secs').oninput = e => { secs = +e.target.value; $('secsOut').textContent = secs + ' 秒'; store.set('secs', secs); schedule(); bumpTray(); };
+  // 操作バー
+  function bump() {
+    $('tray').classList.remove('away'); $('vTop').classList.remove('away');
+    clearTimeout(V.hideT); V.hideT = setTimeout(hideControls, 3500);
+  }
+  function hideControls() { $('tray').classList.add('away'); $('vTop').classList.add('away'); clearTimeout(V.hideT); }
+  function toggleControls() { if ($('tray').classList.contains('away')) bump(); else hideControls(); }
+  ['tray', 'vTop'].forEach(id => $(id).addEventListener('pointerdown', e => { e.stopPropagation(); bump(); }));
 
-  const setOrder = r => e => {
-    e.stopPropagation();
+  $('playBtn').onclick = () => { V.playing = !V.playing; updatePlayIcon(); V.playing ? schedule() : clearTimeout(V.timer); };
+  $('secs').oninput = e => { secs = +e.target.value; $('secsOut').textContent = secs + ' 秒'; store.set('secs', secs); schedule(); };
+  const setOrder = r => () => {
     if (random === r) return;
     random = r; store.set('random', r); setSeg('ordName', 'ordRand', !r);
-    if (!items.length) return;
-    const cur = order[pos]; buildOrder();
-    if (r) { const k = order.indexOf(cur); [order[0], order[k]] = [order[k], order[0]]; pos = 0; } else pos = cur;
-    $('count').textContent = (pos + 1) + ' / ' + order.length;
-    schedule(); bumpTray();
+    buildSeq(V.seq[V.pos]); updateInfo(); schedule();
   };
   $('ordName').onclick = setOrder(false);
   $('ordRand').onclick = setOrder(true);
-
-  const setFit = c => e => { e.stopPropagation(); cover = c; store.set('cover', c); setSeg('fitContain', 'fitCover', !c); stage.classList.toggle('cover', c); bumpTray(); };
+  const setFit = c => () => { cover = c; store.set('cover', c); setSeg('fitContain', 'fitCover', !c); stage.classList.toggle('cover', c); };
   $('fitContain').onclick = setFit(false);
   $('fitCover').onclick = setFit(true);
 
-  function bumpTray() { tray.classList.remove('away'); clearTimeout(hideTimer); hideTimer = setTimeout(() => { if (items.length) tray.classList.add('away'); }, 3500); }
-  tray.addEventListener('pointerdown', e => { e.stopPropagation(); bumpTray(); });
-
-  let sx = 0, sy = 0, st = 0;
-  stage.addEventListener('pointerdown', e => { sx = e.clientX; sy = e.clientY; st = Date.now(); });
-  stage.addEventListener('pointerup', e => {
-    if (!items.length) return;
-    const dx = e.clientX - sx, dy = e.clientY - sy;
-    if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) { step(dx < 0 ? 1 : -1); return; }
-    if (Date.now() - st > 600) return;
-    const x = e.clientX / innerWidth;
-    if (x < 1/3) step(-1);
-    else if (x > 2/3) step(1);
-    else if (tray.classList.contains('away')) bumpTray();
-    else { tray.classList.add('away'); clearTimeout(hideTimer); }
+  // 指で動かすとスワイプで切り替え。タップは操作バー、ダブルタップはお気に入り
+  let drag = null, tapT = null, lastTap = 0;
+  stage.addEventListener('pointerdown', e => {
+    if (V.anim || drag) return;
+    drag = { id: e.pointerId, x0: e.clientX, y0: e.clientY, t0: Date.now(), lx: e.clientX, lt: Date.now(), vx: 0, dx: 0, active: false };
+    try { stage.setPointerCapture(e.pointerId); } catch {}
   });
+  stage.addEventListener('pointermove', e => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const dx = e.clientX - drag.x0, dy = e.clientY - drag.y0;
+    if (!drag.active) {
+      if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) startDrag(); else return;
+    }
+    const now = Date.now();
+    if (now > drag.lt) { drag.vx = (e.clientX - drag.lx) / (now - drag.lt); drag.lx = e.clientX; drag.lt = now; }
+    drag.dx = dx; positionDrag(dx);
+  });
+  stage.addEventListener('pointerup', endPointer);
+  stage.addEventListener('pointercancel', endPointer);
+
+  function startDrag() {
+    drag.active = true; clearTimeout(V.timer);
+    if (!V.cur.isConnected) stage.appendChild(V.cur);
+    stage.querySelectorAll('img').forEach(x => { if (x !== V.cur) x.remove(); });
+    V.cur.classList.add('on', 'drag');
+    if (V.seq.length > 1) {
+      drag.next = makeImg(V.seq[wrapI(V.pos + 1)]);
+      drag.prev = makeImg(V.seq[wrapI(V.pos - 1)]);
+      [drag.next, drag.prev].forEach(x => { x.classList.add('on', 'drag'); stage.appendChild(x); });
+    }
+    positionDrag(0);
+  }
+  function positionDrag(dx) {
+    const W = stage.clientWidth;
+    if (V.seq.length < 2) dx *= 0.3;
+    V.cur.style.transform = 'translateX(' + dx + 'px)';
+    if (drag.next) drag.next.style.transform = 'translateX(' + (W + dx) + 'px)';
+    if (drag.prev) drag.prev.style.transform = 'translateX(' + (-W + dx) + 'px)';
+  }
+  function endPointer(e) {
+    if (!drag || e.pointerId !== drag.id) return;
+    const d = drag; drag = null;
+    if (!d.active) {
+      if (e.type === 'pointerup' && Date.now() - d.t0 < 400 && Math.hypot(e.clientX - d.x0, e.clientY - d.y0) < 10) handleTap();
+      return;
+    }
+    const W = stage.clientWidth;
+    let dir = 0;
+    if (V.seq.length > 1 && (Math.abs(d.dx) > W * 0.2 || Math.abs(d.vx) > 0.5)) dir = d.dx < 0 ? 1 : -1;
+    if (dir && Math.sign(d.vx) === dir && Math.abs(d.vx) > 0.5 && Math.abs(d.dx) < W * 0.2) dir = 0; // 逆向きに弾いたら戻す
+    const els = [V.cur, d.next, d.prev].filter(Boolean);
+    els.forEach(x => { x.classList.remove('drag'); x.classList.add('slide'); });
+    V.anim = true;
+    requestAnimationFrame(() => {
+      if (dir === 1) { V.cur.style.transform = 'translateX(' + (-W) + 'px)'; d.next.style.transform = 'translateX(0)'; d.prev.style.transform = 'translateX(' + (-2 * W) + 'px)'; }
+      else if (dir === -1) { V.cur.style.transform = 'translateX(' + W + 'px)'; d.prev.style.transform = 'translateX(0)'; d.next.style.transform = 'translateX(' + (2 * W) + 'px)'; }
+      else { V.cur.style.transform = 'translateX(0)'; if (d.next) d.next.style.transform = 'translateX(' + W + 'px)'; if (d.prev) d.prev.style.transform = 'translateX(' + (-W) + 'px)'; }
+    });
+    setTimeout(() => {
+      const keep = dir === 1 ? d.next : dir === -1 ? d.prev : V.cur;
+      els.forEach(x => { if (x !== keep) x.remove(); });
+      keep.classList.remove('slide'); keep.style.transform = '';
+      V.cur = keep; V.anim = false;
+      if (dir) V.pos = wrapI(V.pos + dir);
+      updateInfo(); schedule();
+    }, 320);
+  }
+  function handleTap() {
+    const now = Date.now();
+    if (now - lastTap < 300) { clearTimeout(tapT); lastTap = 0; favCurrent(); return; }
+    lastTap = now;
+    tapT = setTimeout(toggleControls, 300);
+  }
 
   document.addEventListener('keydown', e => {
-    if (!items.length) return;
-    if (e.key === 'ArrowRight') step(1);
-    else if (e.key === 'ArrowLeft') step(-1);
+    if ($('viewer').hidden || V.anim) return;
+    if (e.key === 'ArrowRight') showAt(V.pos + 1);
+    else if (e.key === 'ArrowLeft') showAt(V.pos - 1);
     else if (e.key === ' ') { e.preventDefault(); $('playBtn').click(); }
+    else if (e.key === 'Escape') closeViewer();
   });
 
   async function requestWake() {
-    try { if ('wakeLock' in navigator && document.visibilityState === 'visible') await navigator.wakeLock.request('screen'); } catch {}
+    try { if ('wakeLock' in navigator && document.visibilityState === 'visible') V.wake = await navigator.wakeLock.request('screen'); } catch {}
   }
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && items.length) requestWake(); });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && !$('viewer').hidden) requestWake(); });
 
-  let toastT;
-  function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 2600); }
+  /* ---------- パスワード ---------- */
+  const LOCK_KEY = 'ss.lock';
+  let lockMode = null, locked = true;
+  const getLock = () => { try { return JSON.parse(localStorage.getItem(LOCK_KEY)); } catch { return null; } };
+  async function hashPw(pw, salt) {
+    const s = salt + ':' + pw;
+    if (window.crypto && crypto.subtle) {
+      const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
+      return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+    let h = 5381; for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0; return 'x' + h;
+  }
+  function lockMsg(t, err) { const m = $('lockMsg'); m.textContent = t; m.classList.toggle('err', !!err); }
+  function showLock(mode) {
+    lockMode = mode;
+    if (mode !== 'change') { locked = true; clearTimeout(V.timer); }
+    $('lock').hidden = false;
+    $('pw1').value = ''; $('pw2').value = '';
+    $('pw2').hidden = mode === 'unlock';
+    $('forgot').hidden = mode !== 'unlock';
+    $('cancelChange').hidden = mode !== 'change';
+    $('lockTitle').textContent = mode === 'unlock' ? 'パスワードを入力' : mode === 'setup' ? 'パスワードを設定' : '新しいパスワード';
+    $('lockBtn').textContent = mode === 'unlock' ? '開く' : '設定する';
+    $('pw1').autocomplete = mode === 'unlock' ? 'current-password' : 'new-password';
+    lockMsg(mode === 'setup' ? '起動するたびに、このパスワードで開きます' : '');
+    setTimeout(() => { try { $('pw1').focus(); } catch {} }, 50);
+  }
+  function lockNow() { showLock(getLock() ? 'unlock' : 'setup'); }
+  function unlockDone() {
+    $('lock').hidden = true; locked = false; lockMode = null;
+    if (!$('viewer').hidden) { schedule(); requestWake(); }
+  }
+  $('lockForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    const p1 = $('pw1').value, p2 = $('pw2').value;
+    if (lockMode === 'unlock') {
+      const L = getLock();
+      if (L && await hashPw(p1, L.salt) === L.hash) { unlockDone(); return; }
+      lockMsg('パスワードが違います', true); $('pw1').value = '';
+      const b = $('lockForm'); b.classList.remove('shake'); void b.offsetWidth; b.classList.add('shake');
+      return;
+    }
+    if (p1.length < 4) { lockMsg('4文字以上にしてください', true); return; }
+    if (p1 !== p2) { lockMsg('2回の入力が一致しません', true); $('pw2').value = ''; return; }
+    const salt = Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b => b.toString(16).padStart(2, '0')).join('');
+    try { localStorage.setItem(LOCK_KEY, JSON.stringify({ salt, hash: await hashPw(p1, salt) })); }
+    catch { lockMsg('保存できませんでした', true); return; }
+    toast('パスワードを設定しました');
+    unlockDone();
+  });
+  $('changePw').onclick = () => showLock('change');
+  $('cancelChange').onclick = () => { $('lock').hidden = true; lockMode = null; };
+  $('forgot').onclick = async () => {
+    if (!confirm('パスワードをリセットすると、このアプリに保存したプロジェクトとお気に入りがすべて削除されます。ファイルアプリの元の写真は消えません。リセットしますか？')) return;
+    try { if (dbp) (await dbp).close(); } catch {}
+    try { localStorage.removeItem(LOCK_KEY); } catch {}
+    const r = indexedDB.deleteDatabase('slideshow-v2');
+    r.onsuccess = r.onerror = r.onblocked = () => location.reload();
+  };
+  // アプリを閉じたり別のアプリに切り替えたら、すぐ鍵をかける
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && lockMode !== 'setup') lockNow(); });
+  window.addEventListener('pagehide', () => { if (lockMode !== 'setup') lockNow(); });
 
-  // 前回保存した写真があれば自動で始める
-  db.load().then(saved => { if (saved.length && !items.length) start(saved); }).catch(() => {});
+  updatePlayIcon();
+  lockNow();
+  showHome();
 })();
 </script>
 </body>
